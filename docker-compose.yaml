@@ -1,0 +1,30 @@
+services:
+  traefik:
+    image: docker.io/library/traefik:v2.9
+    volumes:
+    - .:/plugins-local/src/github.com/charanpreetp/fail2ban
+    - //var/run/docker.sock:/var/run/docker.sock
+    command:
+    - --api
+    - --api.insecure
+    - --api.dashboard=true
+    - --providers.docker=true    
+    - --providers.docker.exposedbydefault=false
+    - --log.level=DEBUG
+    - --entrypoints.web.address=:80
+    - --experimental.localplugins.fail2ban.modulename=github.com/charanpreetp/fail2ban
+    ports:
+    - 80:80
+    - 8080:8080
+    
+  
+  whoami:
+    image: docker.io/traefik/whoami
+    labels:
+      traefik.enable: true
+      traefik.http.middlewares.test-ban.plugin.fail2ban.NumberFails: 3
+      traefik.http.middlewares.test-ban.plugin.fail2ban.BanTime: 30s
+      traefik.http.routers.whoami.entrypoints: web
+      traefik.http.routers.whoami.rule: Host(`localhost`)
+      traefik.http.routers.whoami.middlewares: test-ban
+    
