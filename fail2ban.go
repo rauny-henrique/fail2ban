@@ -2,12 +2,11 @@ package fail2ban
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"os"
 	"sync"
 	"time"
-
-	"github.com/sirupsen/logrus"
 )
 
 type Config struct {
@@ -37,7 +36,7 @@ type fail2Ban struct {
 	next http.Handler
 	name string
 
-	logger *logrus.Logger
+	logger *log.Logger
 	mu     sync.Mutex
 
 	maxFails      uint
@@ -47,9 +46,7 @@ type fail2Ban struct {
 }
 
 func New(ctx context.Context, next http.Handler, config *Config, middleWareName string) (http.Handler, error) {
-	logger := logrus.New()
-	logger.Out = os.Stdout
-	logger.Formatter = &logrus.JSONFormatter{}
+	logger := log.New(os.Stdout, "[Fail-2-Ban] ", log.Lmsgprefix|log.LstdFlags|log.LUTC)
 	duration, err := time.ParseDuration(config.BanTime)
 	f := fail2Ban{
 		name:          middleWareName,
@@ -60,7 +57,7 @@ func New(ctx context.Context, next http.Handler, config *Config, middleWareName 
 		banTime:       duration,
 		bannedClients: make(map[string]*client),
 	}
-	f.logger.Infof("Max Number Failures %d, Ban Time %s, Client-ID-header %s", f.maxFails, f.banTime, f.clientHeader)
+	f.logger.Printf("Max Number Failures %d, Ban Time %s, Client-ID-header %s\n", f.maxFails, f.banTime, f.clientHeader)
 	if err == nil {
 		go f.cleaner(ctx)
 	}
@@ -85,7 +82,7 @@ func (i *interceptor) WriteHeader(code int) {
 
 func (f *fail2Ban) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	client := req.Header.Get(f.clientHeader)
-	f.logger.Debugf("Request from %s", client)
+	f.logger.Printf("Request from %s\n", client)
 
 	if f.checkViewCounter(client) {
 		rw.WriteHeader(http.StatusForbidden)
@@ -103,17 +100,17 @@ func (f *fail2Ban) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 func (f *fail2Ban) checkViewCounter(ip string) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.logger.Debugf("Checking for %s", ip)
+	f.logger.Printf("Checking for %s\n", ip)
 	if c, ok := f.bannedClients[ip]; !ok {
 		return false
 	} else if c.failCounter >= f.maxFails {
 		// Un-ban
 		if time.Now().After(c.nextAllowedView(f.banTime)) {
-			f.logger.Infof("Un-Banned %s", ip)
+			f.logger.Printf("Un-Banned %s\n", ip)
 			delete(f.bannedClients, ip)
 		} else {
 			// extend Ban
-			f.logger.Infof("Extend Ban for %s", ip)
+			f.logger.Printf("Extend Ban for %s\n", ip)
 			c.failCounter++
 			c.lastViewed = time.Now()
 			f.bannedClients[ip] = c
@@ -126,7 +123,7 @@ func (f *fail2Ban) checkViewCounter(ip string) bool {
 func (f *fail2Ban) incrementViewCounter(ip string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.logger.Debugf("Increment %s", ip)
+	f.logger.Printf("Increment %s\n", ip)
 	if f.bannedClients[ip] == nil {
 		f.bannedClients[ip] = &client{
 			failCounter: 1,
@@ -145,17 +142,17 @@ func (f *fail2Ban) cleaner(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-timer.C:
-			f.logger.Debug("Cleaning up stale clients...")
+			f.logger.Println("Cleaning up stale clients...")
 			f.mu.Lock()
 			{
 				now := time.Now()
 				for ip, c := range f.bannedClients {
 					if now.After(c.nextAllowedView(f.banTime)) {
-						f.logger.Infof("%s is no longer banned", ip)
+						f.logger.Printf("%s is no longer banned\n", ip)
 						c = nil
 						delete(f.bannedClients, ip)
 					} else {
-						f.logger.Debugf("%s is still banned", ip)
+						f.logger.Printf("%s is still banned\n", ip)
 					}
 				}
 			}
