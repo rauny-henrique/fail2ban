@@ -3,7 +3,6 @@ package fail2ban
 import (
 	"context"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"sync"
@@ -77,11 +76,7 @@ func (i *interceptor) WriteHeader(code int) {
 }
 
 func (f *fail2Ban) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
-	client, _, err := net.SplitHostPort(req.RemoteAddr)
-	if err != nil {
-		rw.WriteHeader(http.StatusForbidden)
-		return
-	}
+	client := req.Header.Get("Cf-Connecting-IP")
 	f.logger.Println("Request from ", client)
 
 	if f.checkViewCounter(client) {
