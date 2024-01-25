@@ -34,17 +34,21 @@ type fail2Ban struct {
 	next   http.Handler
 	name   string
 	logger *log.Logger
-	mu     sync.Mutex
 
 	// Stuff specific to this plugin
 	maxFails      uint
 	banTime       time.Duration
 	clientHeader  string
 	bannedClients map[string]*client
+	// mutex is specifically access the bannedClients map
+	mu sync.Mutex
+
+	// this is a test var to signal cleaner is running
+	_cleaning_test_var bool
 }
 
 func New(ctx context.Context, next http.Handler, config *Config, middleWareName string) (http.Handler, error) {
-	logger := log.New("Fail-2-Ban", log.Info)
+	logger := log.New("Fail-2-Ban", log.LogLevel(config.LogLevel))
 	duration, err := time.ParseDuration(config.BanTime)
 	f := fail2Ban{
 		name:          middleWareName,
@@ -55,7 +59,7 @@ func New(ctx context.Context, next http.Handler, config *Config, middleWareName 
 		banTime:       duration,
 		bannedClients: make(map[string]*client),
 	}
-	f.logger.Infof("Max Number Failures %q, Ban Time %q, Client-ID-header %q", f.maxFails, f.banTime, f.clientHeader)
+	f.logger.Infof("Max Number Failures %d, Ban Time %q, Client-ID-header %q", f.maxFails, f.banTime, f.clientHeader)
 	if err == nil {
 		go f.cleaner(ctx)
 	}
@@ -74,7 +78,7 @@ func (f *fail2Ban) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	f.logger.Debugf("Request from %s", client)
 
 	// block request if client has been banned
-	if f.checkViewCounter(client) {
+	if f.isClientBanned(client) {
 		rw.WriteHeader(http.StatusForbidden)
 		return
 	}
@@ -89,7 +93,7 @@ func (f *fail2Ban) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 }
 
-func (f *fail2Ban) checkViewCounter(ip string) bool {
+func (f *fail2Ban) isClientBanned(ip string) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.logger.Debugf("Checking for %s", ip)
@@ -97,7 +101,7 @@ func (f *fail2Ban) checkViewCounter(ip string) bool {
 		return false
 	} else if c.failCounter >= f.maxFails {
 		// Un-ban
-		if time.Now().After(c.nextAllowedView(f.banTime)) {
+		if c.hasBanExpired(time.Now(), f.banTime) {
 			f.logger.Infof("Un-Banned %s", ip)
 			delete(f.bannedClients, ip)
 		} else {
@@ -105,7 +109,6 @@ func (f *fail2Ban) checkViewCounter(ip string) bool {
 			f.logger.Infof("Extend Ban for %s", ip)
 			c.failCounter++
 			c.lastViewed = time.Now()
-			f.bannedClients[ip] = c
 			return true
 		}
 	}
@@ -132,19 +135,21 @@ func (f *fail2Ban) cleaner(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			f.logger.Info("Shutting down client cleaner")
+			f._cleaning_test_var = false
 			return
 		case <-timer.C:
 			f.logger.Debugf("Cleaning up stale clients...")
 			f.mu.Lock()
+			f._cleaning_test_var = true
 			{
 				now := time.Now()
 				for ip, c := range f.bannedClients {
-					if now.After(c.nextAllowedView(f.banTime)) {
-						f.logger.Infof("%s is no longer banned\n", ip)
-						c = nil
+					if c.hasBanExpired(now, f.banTime) {
+						f.logger.Infof("%s is no longer banned", ip)
 						delete(f.bannedClients, ip)
 					} else {
-						f.logger.Debugf("%s is still banned\n", ip)
+						f.logger.Debugf("%s is still banned", ip)
 					}
 				}
 			}
@@ -155,15 +160,18 @@ func (f *fail2Ban) cleaner(ctx context.Context) {
 }
 
 func (f *fail2Ban) extractClient(req *http.Request) (string, error) {
-	if len(f.clientHeader) >= 0 {
+	if len(f.clientHeader) > 0 {
 		client := req.Header.Get(f.clientHeader)
 		if len(client) == 0 {
 			return "", fmt.Errorf("failed to extract Client Identifier from %q Header", f.clientHeader)
 		}
 		return client, nil
 	}
-	client, _, err := net.SplitHostPort(req.RemoteAddr)
-	return client, fmt.Errorf("failed to extract Client IP from RemoteAddr: %w", err)
+	if client, _, err := net.SplitHostPort(req.RemoteAddr); err != nil {
+		return "", fmt.Errorf("failed to extract Client IP from RemoteAddr: %w", err)
+	} else {
+		return client, nil
+	}
 }
 
 // Intercept Return code from downstream
@@ -192,6 +200,6 @@ type client struct {
 	failCounter uint
 }
 
-func (c client) nextAllowedView(d time.Duration) time.Time {
-	return c.lastViewed.Add(d)
+func (c client) hasBanExpired(currentTime time.Time, d time.Duration) bool {
+	return currentTime.After(c.lastViewed.Add(d))
 }
