@@ -40,8 +40,9 @@ const (
 
 func New(prefix string, level LogLevel) *Logger {
 	return &Logger{
-		output: os.Stdout,
-		prefix: prefix,
+		output:   os.Stdout,
+		prefix:   prefix,
+		logLevel: level,
 	}
 }
 
