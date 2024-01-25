@@ -2,43 +2,41 @@ package fail2ban
 
 import (
 	"context"
-	"log"
+	"fmt"
+	"net"
 	"net/http"
-	"os"
 	"sync"
 	"time"
+
+	"fail2ban/log"
 )
 
+// Config passed in from traefik configuration
 type Config struct {
 	NumberFails  uint
 	BanTime      string
 	ClientHeader string
+	LogLevel     log.LogLevel
 }
 
+// Create config with reasonable defaults
 func CreateConfig() *Config {
 	return &Config{
 		NumberFails:  3,
 		BanTime:      "3h",
 		ClientHeader: "Cf-Connecting-IP",
+		LogLevel:     log.Info,
 	}
 }
 
-type client struct {
-	lastViewed  time.Time
-	failCounter uint
-}
-
-func (c client) nextAllowedView(d time.Duration) time.Time {
-	return c.lastViewed.Add(d)
-}
-
 type fail2Ban struct {
-	next http.Handler
-	name string
-
+	// Boilerplate stuff
+	next   http.Handler
+	name   string
 	logger *log.Logger
 	mu     sync.Mutex
 
+	// Stuff specific to this plugin
 	maxFails      uint
 	banTime       time.Duration
 	clientHeader  string
@@ -46,7 +44,7 @@ type fail2Ban struct {
 }
 
 func New(ctx context.Context, next http.Handler, config *Config, middleWareName string) (http.Handler, error) {
-	logger := log.New(os.Stdout, "[Fail-2-Ban] ", log.Lmsgprefix|log.LstdFlags|log.LUTC)
+	logger := log.New("Fail-2-Ban", log.Info)
 	duration, err := time.ParseDuration(config.BanTime)
 	f := fail2Ban{
 		name:          middleWareName,
@@ -57,7 +55,7 @@ func New(ctx context.Context, next http.Handler, config *Config, middleWareName 
 		banTime:       duration,
 		bannedClients: make(map[string]*client),
 	}
-	f.logger.Printf("Max Number Failures %d, Ban Time %s, Client-ID-header %s\n", f.maxFails, f.banTime, f.clientHeader)
+	f.logger.Infof("Max Number Failures %q, Ban Time %q, Client-ID-header %q", f.maxFails, f.banTime, f.clientHeader)
 	if err == nil {
 		go f.cleaner(ctx)
 	}
@@ -65,34 +63,28 @@ func New(ctx context.Context, next http.Handler, config *Config, middleWareName 
 	return &f, err
 }
 
-// Intercept Return code from downstream
-type interceptor struct {
-	http.ResponseWriter
-	code int
-}
-
-func newIntercept(w http.ResponseWriter) *interceptor {
-	return &interceptor{w, http.StatusAccepted}
-}
-
-func (i *interceptor) WriteHeader(code int) {
-	i.code = code
-	i.ResponseWriter.WriteHeader(code)
-}
-
 func (f *fail2Ban) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
-	client := req.Header.Get(f.clientHeader)
-	f.logger.Printf("Request from %s\n", client)
+	client, err := f.extractClient(req)
+	if err != nil {
+		f.logger.Errorf("Failed to get Client Identifier due to %q, blocking request to be safe", err)
+		rw.WriteHeader(http.StatusForbidden)
+		return
 
+	}
+	f.logger.Debugf("Request from %s", client)
+
+	// block request if client has been banned
 	if f.checkViewCounter(client) {
 		rw.WriteHeader(http.StatusForbidden)
 		return
 	}
 
+	// intercept returned status code from downstream service(s)
 	i := newIntercept(rw)
 	f.next.ServeHTTP(i, req)
 
-	if i.code >= 400 && i.code < 500 {
+	// check for 4xx class status code
+	if i.checkBadUserRequestStatusCode() {
 		f.incrementViewCounter(client)
 	}
 }
@@ -100,17 +92,17 @@ func (f *fail2Ban) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 func (f *fail2Ban) checkViewCounter(ip string) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.logger.Printf("Checking for %s\n", ip)
+	f.logger.Debugf("Checking for %s", ip)
 	if c, ok := f.bannedClients[ip]; !ok {
 		return false
 	} else if c.failCounter >= f.maxFails {
 		// Un-ban
 		if time.Now().After(c.nextAllowedView(f.banTime)) {
-			f.logger.Printf("Un-Banned %s\n", ip)
+			f.logger.Infof("Un-Banned %s", ip)
 			delete(f.bannedClients, ip)
 		} else {
 			// extend Ban
-			f.logger.Printf("Extend Ban for %s\n", ip)
+			f.logger.Infof("Extend Ban for %s", ip)
 			c.failCounter++
 			c.lastViewed = time.Now()
 			f.bannedClients[ip] = c
@@ -123,7 +115,7 @@ func (f *fail2Ban) checkViewCounter(ip string) bool {
 func (f *fail2Ban) incrementViewCounter(ip string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.logger.Printf("Increment %s\n", ip)
+	f.logger.Debugf("Increment %s", ip)
 	if f.bannedClients[ip] == nil {
 		f.bannedClients[ip] = &client{
 			failCounter: 1,
@@ -142,17 +134,17 @@ func (f *fail2Ban) cleaner(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-timer.C:
-			f.logger.Println("Cleaning up stale clients...")
+			f.logger.Debugf("Cleaning up stale clients...")
 			f.mu.Lock()
 			{
 				now := time.Now()
 				for ip, c := range f.bannedClients {
 					if now.After(c.nextAllowedView(f.banTime)) {
-						f.logger.Printf("%s is no longer banned\n", ip)
+						f.logger.Infof("%s is no longer banned\n", ip)
 						c = nil
 						delete(f.bannedClients, ip)
 					} else {
-						f.logger.Printf("%s is still banned\n", ip)
+						f.logger.Debugf("%s is still banned\n", ip)
 					}
 				}
 			}
@@ -160,4 +152,46 @@ func (f *fail2Ban) cleaner(ctx context.Context) {
 		}
 		timer.Reset(f.banTime / 4)
 	}
+}
+
+func (f *fail2Ban) extractClient(req *http.Request) (string, error) {
+	if len(f.clientHeader) >= 0 {
+		client := req.Header.Get(f.clientHeader)
+		if len(client) == 0 {
+			return "", fmt.Errorf("failed to extract Client Identifier from %q Header", f.clientHeader)
+		}
+		return client, nil
+	}
+	client, _, err := net.SplitHostPort(req.RemoteAddr)
+	return client, fmt.Errorf("failed to extract Client IP from RemoteAddr: %w", err)
+}
+
+// Intercept Return code from downstream
+type interceptor struct {
+	http.ResponseWriter
+	code int
+}
+
+func newIntercept(w http.ResponseWriter) *interceptor {
+	return &interceptor{w, http.StatusAccepted}
+}
+
+// Check for for 4xx status code (bad user requests)
+func (i *interceptor) checkBadUserRequestStatusCode() bool {
+	return i.code >= http.StatusBadRequest && i.code < http.StatusInternalServerError
+}
+
+func (i *interceptor) WriteHeader(code int) {
+	i.code = code
+	i.ResponseWriter.WriteHeader(code)
+}
+
+// client data tracking struct
+type client struct {
+	lastViewed  time.Time
+	failCounter uint
+}
+
+func (c client) nextAllowedView(d time.Duration) time.Time {
+	return c.lastViewed.Add(d)
 }
