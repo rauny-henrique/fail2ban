@@ -139,17 +139,17 @@ func (f *fail2Ban) cleaner(ctx context.Context) {
 			f._cleaning_test_var = false
 			return
 		case <-timer.C:
-			f.logger.Debugf("Cleaning up stale clients...")
+			f.logger.Debugf("Cleaning up stale client states...")
 			f.mu.Lock()
 			f._cleaning_test_var = true
 			{
 				now := time.Now()
 				for ip, c := range f.bannedClients {
 					if c.hasBanExpired(now, f.banTime) {
-						f.logger.Infof("%s is no longer banned", ip)
+						f.logger.Infof("Clearing out state for %s, it is no longer banned", ip)
 						delete(f.bannedClients, ip)
 					} else {
-						f.logger.Debugf("%s is still banned", ip)
+						f.logger.Debugf("%s still needs to be tracked", ip)
 					}
 				}
 			}

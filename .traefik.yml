@@ -8,7 +8,7 @@ type: middleware
 import: github.com/charanpreetp/fail2ban
 
 # A brief description of what your plugin is doing.
-summary: Ban IPs that make too many bad requests (4-500 status codes)
+summary: Ban IPs that make too many bad HTTP requests (ie, the response from downstream has 4-500 status codes)
 
 # Medias associated to the plugin (optional)
 # iconPath: foo/icon.png
@@ -19,4 +19,5 @@ summary: Ban IPs that make too many bad requests (4-500 status codes)
 # and Plugins Catalog will try to execute the plugin with the data you provide as part of its startup validity tests.
 testData:
   NumberFails: 3
-  BanTime: 1s
+  BanTime: 1h
+  ClientHeader: Cf-Connecting-IP
