@@ -48,11 +48,13 @@ type fail2Ban struct {
 }
 
 func New(ctx context.Context, next http.Handler, config *Config, middleWareName string) (http.Handler, error) {
-	logger := log.New("Fail-2-Ban", log.LogLevel(config.LogLevel))
 	duration, err := time.ParseDuration(config.BanTime)
+	if err != nil {
+		return nil, err
+	}
 	f := fail2Ban{
 		name:          middleWareName,
-		logger:        logger,
+		logger:        log.New("Fail-2-Ban", config.LogLevel),
 		next:          next,
 		maxFails:      config.NumberFails,
 		clientHeader:  config.ClientHeader,
@@ -60,9 +62,7 @@ func New(ctx context.Context, next http.Handler, config *Config, middleWareName 
 		bannedClients: make(map[string]*client),
 	}
 	f.logger.Infof("Max Number Failures %d, Ban Time %q, Client-ID-header %q", f.maxFails, f.banTime, f.clientHeader)
-	if err == nil {
-		go f.cleaner(ctx)
-	}
+	go f.cleaner(ctx)
 
 	return &f, err
 }

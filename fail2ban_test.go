@@ -60,7 +60,7 @@ func TestSeverBanned(t *testing.T) {
 			w.WriteHeader(http.StatusNotFound)
 		}),
 		&Config{
-			BanTime:     "1ms",
+			BanTime:     "100ms",
 			LogLevel:    "ERROR",
 			NumberFails: 3,
 		},
@@ -85,7 +85,7 @@ func TestSeverBanned(t *testing.T) {
 			}
 		} else {
 			if response.Code != http.StatusForbidden {
-				t.Errorf("Expected response to be %d but got %d", http.StatusNotFound, response.Code)
+				t.Errorf("Expected response to be %d but got %d", http.StatusForbidden, response.Code)
 			}
 		}
 		// Client should get added to ban list
@@ -95,7 +95,7 @@ func TestSeverBanned(t *testing.T) {
 	}
 
 	// Wait to get unbanned and then try a new request
-	time.Sleep(3 * time.Millisecond)
+	time.Sleep(300 * time.Millisecond)
 	response := httptest.NewRecorder()
 	request := httptest.NewRequest("GET", "http://garabge", nil)
 	request.RemoteAddr = "1.2.3.4:5678"
@@ -126,7 +126,7 @@ func TestSeverMultipleClientsAtOnce(t *testing.T) {
 			}
 		}),
 		&Config{
-			BanTime:      "1ms",
+			BanTime:      "1s",
 			LogLevel:     "ERROR",
 			ClientHeader: "header",
 			NumberFails:  3,
@@ -157,11 +157,11 @@ func TestSeverMultipleClientsAtOnce(t *testing.T) {
 					// First few requests will be fine, will get banned after NumberFails is reached
 					if idx < f.maxFails {
 						if response.Code != http.StatusNotFound {
-							t.Errorf("Expected response to be %d but got %d", http.StatusNotFound, response.Code)
+							t.Errorf("Expected response for client %d on request %d to be %d but got %d", client, idx, http.StatusNotFound, response.Code)
 						}
 					} else {
 						if response.Code != http.StatusForbidden {
-							t.Errorf("Expected response to be %d but got %d", http.StatusForbidden, response.Code)
+							t.Errorf("Expected response for client %d on request %d to be %d but got %d", client, idx, http.StatusForbidden, response.Code)
 						}
 					}
 					// Client should get added to ban list
@@ -245,7 +245,6 @@ func TestIncrementingViewCounter(t *testing.T) {
 		nil,
 		&Config{
 			BanTime:     "1s",
-			LogLevel:    "ERROR",
 			NumberFails: 3,
 		},
 		"test",
