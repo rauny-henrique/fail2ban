@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/charanpreetp/fail2ban/log"
+	"github.com/rauny-henrique/fail2ban/log"
 )
 
 // Config passed in from traefik configuration
