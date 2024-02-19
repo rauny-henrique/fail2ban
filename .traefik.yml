@@ -1,11 +1,11 @@
 # The name of your plugin as displayed in the Plugins Catalog web UI.
-displayName: Fail 2 Ban
+displayName: Fail 2 Ban 2
 
 # For now, `middleware` is the only type available.
 type: middleware
 
 # The import path of your plugin.
-import: github.com/charanpreetp/fail2ban
+import: github.com/rauny-henrique/fail2ban
 
 # A brief description of what your plugin is doing.
 summary: Ban IPs that make too many bad HTTP requests (ie, the response from downstream has 4-500 status codes)
