@@ -62,7 +62,7 @@ func New(ctx context.Context, next http.Handler, config *Config, middleWareName 
 		bannedClients: make(map[string]*client),
 	}
 	f.logger.Infof("Max Number Failures %d, Ban Time %q, Client-ID-header %q", f.maxFails, f.banTime, f.clientHeader)
-	go f.cleaner(ctx)
+	// go f.cleaner(ctx)
 
 	return &f, err
 }
