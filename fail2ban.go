@@ -162,10 +162,9 @@ func (f *fail2Ban) cleaner(ctx context.Context) {
 func (f *fail2Ban) extractClient(req *http.Request) (string, error) {
 	if len(f.clientHeader) > 0 {
 		client := req.Header.Get(f.clientHeader)
-		if len(client) == 0 {
-			return "", fmt.Errorf("failed to extract Client Identifier from %q Header", f.clientHeader)
+		if len(client) != 0 {
+			return client, nil
 		}
-		return client, nil
 	}
 	if client, _, err := net.SplitHostPort(req.RemoteAddr); err != nil {
 		return "", fmt.Errorf("failed to extract Client IP from RemoteAddr: %w", err)
